@@ -1,0 +1,125 @@
+groups:
+  - name: infrastructure_alerts
+    interval: 30s
+    rules:
+      - alert: HighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total[5m]) > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          category: infrastructure
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is above 80% for {{ $labels.service }}"
+
+      - alert: HighMemoryUsage
+        expr: (container_memory_usage_bytes / container_spec_memory_limit_bytes) > 0.9
+        for: 2m
+        labels:
+          severity: critical
+          category: infrastructure
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is above 90% for {{ $labels.service }}"
+
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.1
+        for: 5m
+        labels:
+          severity: warning
+          category: infrastructure
+        annotations:
+          summary: "Disk space is low"
+          description: "Available disk space is below 10% on {{ $labels.device }}"
+
+  - name: application_alerts
+    interval: 30s
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          category: application
+        annotations:
+          summary: "High HTTP error rate"
+          description: "Error rate is {{ $value | humanizePercentage }} for {{ $labels.service }}"
+
+      - alert: SlowResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          category: application
+        annotations:
+          summary: "Slow response time"
+          description: "95th percentile response time is {{ $value }}s for {{ $labels.service }}"
+
+      - alert: ServiceDown
+        expr: up{job!~"prometheus|node-exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          category: application
+        annotations:
+          summary: "Service is down"
+          description: "{{ $labels.job }} has been down for more than 1 minute"
+
+  - name: database_alerts
+    interval: 30s
+    rules:
+      - alert: DatabaseConnectionPoolExhausted
+        expr: pg_stat_database_numbackends / pg_settings_max_connections > 0.9
+        for: 2m
+        labels:
+          severity: critical
+          category: database
+        annotations:
+          summary: "Database connection pool near exhaustion"
+          description: "{{ $labels.database }} is using {{ $value | humanizePercentage }} of connections"
+
+      - alert: SlowDatabaseQueries
+        expr: rate(pg_stat_activity_max_tx_duration[5m]) > 30
+        for: 5m
+        labels:
+          severity: warning
+          category: database
+        annotations:
+          summary: "Slow database queries detected"
+          description: "Long-running queries detected on {{ $labels.database }}"
+
+  - name: network_alerts
+    interval: 30s
+    rules:
+      - alert: HighNetworkLatency
+        expr: rate(node_network_transmit_errs_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          category: network
+        annotations:
+          summary: "High network error rate"
+          description: "Network errors detected on {{ $labels.device }}"
+
+  - name: ai_service_alerts
+    interval: 30s
+    rules:
+      - alert: HighAnalysisFailureRate
+        expr: rate(incident_analysis_failures_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          category: application
+        annotations:
+          summary: "High AI analysis failure rate"
+          description: "AI service is failing to analyze incidents"
+
+      - alert: SlowAnalysis
+        expr: histogram_quantile(0.95, rate(incident_analysis_duration_seconds_bucket[5m])) > 60
+        for: 5m
+        labels:
+          severity: warning
+          category: application
+        annotations:
+          summary: "AI analysis taking too long"
+          description: "95th percentile analysis time is {{ $value }}s"

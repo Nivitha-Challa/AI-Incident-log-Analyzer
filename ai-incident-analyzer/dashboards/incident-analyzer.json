@@ -1,0 +1,215 @@
+{
+  "dashboard": {
+    "title": "AI Incident Analyzer Dashboard",
+    "tags": ["incidents", "ai", "sre"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 0,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Total Incidents (24h)",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "count(rate(incident_analyses_total[24h]))",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto"
+        }
+      },
+      {
+        "id": 2,
+        "title": "Average Analysis Time",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+        "targets": [
+          {
+            "expr": "avg(incident_analysis_duration_seconds)",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Incidents by Classification",
+        "type": "piechart",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "sum by (category) (incident_classifications_total)",
+            "refId": "A",
+            "legendFormat": "{{category}}"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Incident Rate Over Time",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+        "targets": [
+          {
+            "expr": "rate(incident_analyses_total[5m])",
+            "refId": "A",
+            "legendFormat": "Incidents/sec"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "short",
+            "label": "Rate"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Recent Incidents",
+        "type": "table",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+        "targets": [
+          {
+            "expr": "incidents",
+            "refId": "A",
+            "datasource": "PostgreSQL",
+            "rawSql": "SELECT incident_id, timestamp, classification, severity, summary, confidence_score FROM incidents ORDER BY timestamp DESC LIMIT 10"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {},
+              "indexByName": {},
+              "renameByName": {
+                "incident_id": "ID",
+                "timestamp": "Time",
+                "classification": "Type",
+                "severity": "Severity",
+                "summary": "Summary",
+                "confidence_score": "Confidence"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "AI Analysis Duration (p95)",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 12, "x": 0, "y": 20},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(incident_analysis_duration_seconds_bucket[5m]))",
+            "refId": "A",
+            "legendFormat": "p95"
+          },
+          {
+            "expr": "histogram_quantile(0.50, rate(incident_analysis_duration_seconds_bucket[5m]))",
+            "refId": "B",
+            "legendFormat": "p50"
+          }
+        ],
+        "yaxes": [
+          {
+            "format": "s",
+            "label": "Duration"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Log Volume",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 12, "x": 12, "y": 20},
+        "targets": [
+          {
+            "expr": "sum(rate({job=\"varlogs\"}[5m]))",
+            "refId": "A",
+            "datasource": "Loki",
+            "legendFormat": "Logs/sec"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Severity Distribution",
+        "type": "bargauge",
+        "gridPos": {"h": 6, "w": 6, "x": 0, "y": 26},
+        "targets": [
+          {
+            "expr": "incidents",
+            "refId": "A",
+            "datasource": "PostgreSQL",
+            "rawSql": "SELECT severity, COUNT(*) as count FROM incidents WHERE timestamp > NOW() - INTERVAL '24 hours' GROUP BY severity"
+          }
+        ],
+        "options": {
+          "orientation": "horizontal",
+          "displayMode": "gradient"
+        }
+      },
+      {
+        "id": 9,
+        "title": "Average Confidence Score",
+        "type": "gauge",
+        "gridPos": {"h": 6, "w": 6, "x": 6, "y": 26},
+        "targets": [
+          {
+            "expr": "incidents",
+            "refId": "A",
+            "datasource": "PostgreSQL",
+            "rawSql": "SELECT AVG(confidence_score) as avg_confidence FROM incidents WHERE timestamp > NOW() - INTERVAL '24 hours'"
+          }
+        ],
+        "options": {
+          "showThresholdLabels": false,
+          "showThresholdMarkers": true
+        },
+        "fieldConfig": {
+          "defaults": {
+            "min": 0,
+            "max": 1,
+            "thresholds": {
+              "steps": [
+                {"value": 0, "color": "red"},
+                {"value": 0.5, "color": "yellow"},
+                {"value": 0.8, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 10,
+        "title": "System Resource Usage",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 12, "x": 12, "y": 26},
+        "targets": [
+          {
+            "expr": "rate(container_cpu_usage_seconds_total{service=\"ai-service\"}[5m])",
+            "refId": "A",
+            "legendFormat": "AI Service CPU"
+          },
+          {
+            "expr": "container_memory_usage_bytes{service=\"ai-service\"} / 1024 / 1024",
+            "refId": "B",
+            "legendFormat": "AI Service Memory (MB)"
+          }
+        ]
+      }
+    ]
+  }
+}

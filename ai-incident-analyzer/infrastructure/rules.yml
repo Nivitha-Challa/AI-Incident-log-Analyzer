@@ -1,0 +1,41 @@
+groups:
+  - name: infrastructure
+    interval: 30s
+    rules:
+      - alert: HighCPU
+        expr: rate(container_cpu_usage_seconds_total[5m]) > 0.8
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU on {{ $labels.service }}"
+          description: "CPU > 80%"
+
+      - alert: HighMemory
+        expr: (container_memory_usage_bytes / container_spec_memory_limit_bytes) > 0.9
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High memory on {{ $labels.service }}"
+          description: "Memory > 90%"
+
+  - name: application
+    interval: 30s
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Error rate high"
+          description: "{{ $value | humanizePercentage }} errors"
+
+      - alert: ServiceDown
+        expr: up{job!="prometheus"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} down"

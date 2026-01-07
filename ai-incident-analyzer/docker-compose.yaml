@@ -1,0 +1,231 @@
+version: '3.8'
+
+services:
+  # Kafka for event streaming
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - incident-net
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - incident-net
+
+  # PostgreSQL for incident storage
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: incidents
+      POSTGRES_USER: incident_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-incident_pass}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - incident-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U incident_user -d incidents"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yaml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--enable-feature=exemplar-storage'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./configs/prometheus.yaml:/etc/prometheus/prometheus.yaml
+      - ./configs/prometheus-rules.yaml:/etc/prometheus/rules.yaml
+      - prometheus-data:/prometheus
+    networks:
+      - incident-net
+
+  # Alertmanager for alert routing
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yaml'
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./configs/alertmanager.yaml:/etc/alertmanager/alertmanager.yaml
+      - alertmanager-data:/alertmanager
+    networks:
+      - incident-net
+
+  # Loki for log aggregation
+  loki:
+    image: grafana/loki:2.9.2
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./configs/loki-config.yaml:/etc/loki/loki-config.yaml
+      - loki-data:/loki
+    networks:
+      - incident-net
+
+  # Promtail for log shipping
+  promtail:
+    image: grafana/promtail:2.9.2
+    volumes:
+      - ./configs/promtail-config.yaml:/etc/promtail/promtail-config.yaml
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    networks:
+      - incident-net
+    depends_on:
+      - loki
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:10.2.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+    volumes:
+      - ./dashboards:/etc/grafana/provisioning/dashboards
+      - ./configs/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
+      - grafana-data:/var/lib/grafana
+    networks:
+      - incident-net
+    depends_on:
+      - prometheus
+      - loki
+
+  # AI Service (FastAPI + LLM)
+  ai-service:
+    build:
+      context: ./services/ai-service
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: incidents
+      POSTGRES_USER: incident_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-incident_pass}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      PROMETHEUS_URL: http://prometheus:9090
+      LOKI_URL: http://loki:3100
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    networks:
+      - incident-net
+    restart: unless-stopped
+
+  # Log Processor
+  log-processor:
+    build:
+      context: ./services/log-processor
+      dockerfile: Dockerfile
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      LOKI_URL: http://loki:3100
+      AI_SERVICE_URL: http://ai-service:8000
+    depends_on:
+      - kafka
+      - loki
+      - ai-service
+    networks:
+      - incident-net
+    restart: unless-stopped
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      AI_SERVICE_URL: http://ai-service:8000
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: incidents
+      POSTGRES_USER: incident_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-incident_pass}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ai-service:
+        condition: service_started
+    networks:
+      - incident-net
+    restart: unless-stopped
+
+  # Alert Receiver (receives Alertmanager webhooks)
+  alert-receiver:
+    build:
+      context: ./services/alert-receiver
+      dockerfile: Dockerfile
+    ports:
+      - "8090:8090"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      - kafka
+    networks:
+      - incident-net
+    restart: unless-stopped
+
+  # Node Exporter (for system metrics)
+  node-exporter:
+    image: prom/node-exporter:v1.6.1
+    ports:
+      - "9100:9100"
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - incident-net
+
+networks:
+  incident-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  prometheus-data:
+  alertmanager-data:
+  loki-data:
+  grafana-data:
