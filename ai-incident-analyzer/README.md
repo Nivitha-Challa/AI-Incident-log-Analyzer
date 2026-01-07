@@ -135,9 +135,6 @@ For K8s deployment, see `docs/k8s-deploy.md` (TODO).
 └── docker-compose.yml
 ```
 
-## Resume Bullet
-
-> Built AI-powered incident analysis platform that reduced MTTR by 35% by correlating logs, metrics, and alerts using LLM-based root cause analysis
 
 ## License
 
